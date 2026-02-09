@@ -41,6 +41,7 @@ type amiAdapter struct {
 	dialTimeout   time.Duration
 
 	actionsChan   chan map[string]string
+	actionsChanKV chan []KV
 	responseChans map[string]chan map[string]string
 	pingerChan    chan struct{}
 	mutex         *sync.RWMutex
@@ -60,6 +61,7 @@ func newAMIAdapter(s *Settings, eventEmitter func(string, string)) (*amiAdapter,
 	a.reconnect = true
 
 	a.actionsChan = make(chan map[string]string)
+	a.actionsChanKV = make(chan []KV)
 	a.responseChans = make(map[string]chan map[string]string)
 	a.eventsChan = make(chan map[string]string, 8192)
 	a.pingerChan = make(chan struct{})
@@ -216,6 +218,17 @@ func (a *amiAdapter) writer(conn net.Conn, stop <-chan struct{}, writeErrChan ch
 				writeErrChan <- err
 				return
 			}
+		case kv := <-a.actionsChanKV:
+			if !kvHasConnID(kv, a.id) {
+				// action sent before reconnect, need to be ignored
+				continue
+			}
+			data := serializeKV(kv)
+			_, err := conn.Write(data)
+			if err != nil {
+				writeErrChan <- err
+				return
+			}
 		}
 	}
 }
@@ -340,17 +353,17 @@ func readMessage(r *bufio.Reader) (m map[string]string, err error) {
 			return m, err
 		}
 
-        	// Append the current line to the complete line buffer
-        	completeLine.Write(tmpkv)
+		// Append the current line to the complete line buffer
+		completeLine.Write(tmpkv)
 
 		if isprefix {
 			// If the line is a prefix, continue reading more
 			continue
-        	}
+		}
 
 		// We have a complete line now
-        	kv := completeLine.Bytes()
-        	completeLine.Reset() // Reset the buffer for the next line
+		kv := completeLine.Bytes()
+		completeLine.Reset() // Reset the buffer for the next line
 
 		var key string
 		i := bytes.IndexByte(kv, ':')
@@ -446,4 +459,17 @@ func (a *amiAdapter) reader(conn net.Conn, stop <-chan struct{}, readErrChan cha
 			a.distribute(event)
 		}
 	}
+}
+
+func serializeKV(kv []KV) []byte {
+	var outBuf bytes.Buffer
+
+	for _, p := range kv {
+		outBuf.WriteString(p.Key)
+		outBuf.WriteString(": ")
+		outBuf.WriteString(p.Value)
+		outBuf.WriteString("\r\n")
+	}
+	outBuf.WriteString("\r\n")
+	return outBuf.Bytes()
 }
