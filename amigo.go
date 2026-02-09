@@ -60,6 +60,11 @@ type agiCommand struct {
 	dateTime time.Time
 }
 
+type KV struct {
+	Key   string
+	Value string
+}
+
 // New creates new Amigo struct with credentials provided and returns pointer to it
 // Usage: New(username string, secret string, [host string, [port string]])
 func New(settings *Settings) *Amigo {
@@ -103,6 +108,94 @@ func (a *Amigo) Action(action map[string]string) (map[string]string, error) {
 		a.ami.reconnect = false
 	}
 	return result, nil
+}
+
+// KV represents a single AMI field (allows duplicates).
+
+// ActionKV executes AMI Action with duplicate fields support (e.g. multiple Variable:)
+func (a *Amigo) ActionKV(kv []KV) (map[string]string, error) {
+	if !a.Connected() {
+		return nil, errNotConnected
+	}
+
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+	result := a.ami.execKV(kv)
+	if a.capitalizeProps {
+		e := map[string]string{}
+		for k, v := range result {
+			e[strings.ToUpper(k)] = v
+		}
+		return e, nil
+	}
+
+	if strings.ToLower(actionName(kv)) == "logoff" {
+		a.ami.reconnect = false
+	}
+	return result, nil
+}
+
+func actionName(kv []KV) string {
+	for _, p := range kv {
+		if p.Key == "Action" {
+			return p.Value
+		}
+	}
+	return ""
+}
+
+func (a *amiAdapter) execKV(kv []KV) map[string]string {
+	kv = append([]KV{}, kv...)
+	kv = append(kv, KV{Key: amigoConnIDKey, Value: a.id})
+	actionID := getKV(kv, "ActionID")
+	if actionID == "" {
+		actionID = uuid.NewV4()
+		kv = append(kv, KV{Key: "ActionID", Value: actionID})
+	}
+
+	resChan := make(chan map[string]string)
+	a.mutex.Lock()
+	a.responseChans[actionID] = resChan
+	a.mutex.Unlock()
+
+	a.actionsChanKV <- kv
+
+	time.AfterFunc(a.actionTimeout, func() {
+		a.mutex.RLock()
+		_, ok := a.responseChans[actionID]
+		a.mutex.RUnlock()
+		if ok {
+			a.mutex.Lock()
+			if ch, ok := a.responseChans[actionID]; ok {
+				delete(a.responseChans, actionID)
+				a.mutex.Unlock()
+				ch <- map[string]string{"Error": "Timeout"}
+				return
+			}
+			a.mutex.Unlock()
+		}
+	})
+
+	response := <-resChan
+	return response
+}
+
+func getKV(kv []KV, key string) string {
+	for _, p := range kv {
+		if p.Key == key {
+			return p.Value
+		}
+	}
+	return ""
+}
+
+func kvHasConnID(kv []KV, id string) bool {
+	for _, p := range kv {
+		if p.Key == amigoConnIDKey && p.Value == id {
+			return true
+		}
+	}
+	return false
 }
 
 // AgiAction used to execute Agi Actions in Asterisk. Returns full response.
