@@ -8,12 +8,12 @@ Usage is pretty simple.
 
 ## Installation:
 
-`go get github.com/ivahaev/amigo`
+`go get github.com/intersvyaz/amigo`
 
 ## Using
 Import module to your project:
 ```go
-import "github.com/ivahaev/amigo"
+import "github.com/intersvyaz/amigo"
 ```
 
 Then use:
@@ -23,7 +23,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/ivahaev/amigo"
+	"github.com/intersvyaz/amigo"
 )
 
 // Creating hanlder functions
@@ -67,6 +67,21 @@ func main() {
 		result, err := a.Action(map[string]string{"Action": "QueueSummary", "ActionID": "Init"})
 		// If not error, processing result. Response on Action will follow in defined events.
 		// You need to catch them in event channel, DefaultHandler or specified HandlerFunction
+		fmt.Println(result, err)
+	}
+
+	// Use ActionKV when you need duplicate fields (e.g. multiple Variable)
+	if a.Connected() {
+		kv := []amigo.KV{
+			{Key: "Action", Value: "Originate"},
+			{Key: "Channel", Value: "SIP/100"},
+			{Key: "Exten", Value: "200"},
+			{Key: "Context", Value: "default"},
+			{Key: "Priority", Value: "1"},
+			{Key: "Variable", Value: "foo=1"},
+			{Key: "Variable", Value: "bar=2"},
+		}
+		result, err := a.ActionKV(kv)
 		fmt.Println(result, err)
 	}
 	
